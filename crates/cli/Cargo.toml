@@ -1,0 +1,21 @@
+[package]
+name = "tester"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Runs device scenarios in process or over BLE against a hardware simulator"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/u-osaid/tester"
+keywords = ["simulation", "testing", "ble", "medical-device"]
+categories = ["development-tools::testing", "command-line-utilities"]
+
+[features]
+radio = ["tester-ble/radio", "dep:serialport"]
+
+[dependencies]
+pump-shared = { git = "https://github.com/u-osaid/pump-shared", branch = "main", features = ["sim"] }
+pump-ypso = { git = "https://github.com/u-osaid/pump-yspo", branch = "main", features = ["sim", "opn", "delivery"] }
+serialport = { version = "4.10", optional = true }
+simulator-bridge = { git = "https://github.com/u-osaid/simulator", branch = "main", features = ["ypso-sim"] }
+tester-ble = { path = "../ble" }
+tester-harness = { path = "../harness" }

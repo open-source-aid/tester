@@ -1,3 +1,4 @@
+use core::fmt;
 use core::time::Duration;
 use std::collections::{BTreeMap, BTreeSet};
 use std::format;
@@ -25,6 +26,21 @@ pub enum Violation {
     UnannouncedSubscribe(Uuid, Uuid),
 }
 
+impl fmt::Display for Violation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ResentAfterTimeout(data) => write!(f, "write {data:02x?} resent after a timeout"),
+            Self::CompletionRejected(error) => write!(f, "completion rejected: {error}"),
+            Self::NeverSettled => f.write_str("engine never settled"),
+            Self::UnannouncedSubscribe(service, characteristic) => {
+                write!(f, "subscribed to unannounced {service}/{characteristic}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for Violation {}
+
 #[derive(Debug)]
 pub struct Harness<D> {
     pub device: D,
@@ -35,12 +51,17 @@ pub struct Harness<D> {
     pub faults: BTreeMap<usize, Fault>,
     pub announced: Option<&'static DriverInfo>,
     pub resendable: BTreeSet<Uuid>,
+    pub random: fn(usize) -> Vec<u8>,
     subscribed: BTreeSet<(Uuid, Uuid)>,
     actions: usize,
     timed_out_write: Option<(Uuid, Vec<u8>)>,
 }
 
 const MAX_STEPS: usize = 100_000;
+
+fn counting(len: usize) -> Vec<u8> {
+    (0..len).map(|i| i as u8).collect()
+}
 
 impl<D: SimDevice> Harness<D> {
     pub fn new(device: D) -> Self {
@@ -53,6 +74,7 @@ impl<D: SimDevice> Harness<D> {
             faults: BTreeMap::new(),
             announced: None,
             resendable: BTreeSet::new(),
+            random: counting,
             subscribed: BTreeSet::new(),
             actions: 0,
             timed_out_write: None,
@@ -120,9 +142,7 @@ impl<D: SimDevice> Harness<D> {
             }
             Action::Wrap { plaintext, .. } => Completion::Wrapped(plaintext.expose().to_vec()),
             Action::Unwrap { wrapped, .. } => Completion::Secret(Secret::new(wrapped)),
-            Action::Random { len, .. } => {
-                Completion::Secret(Secret::new((0..len).map(|i| i as u8).collect()))
-            }
+            Action::Random { len, .. } => Completion::Secret(Secret::new((self.random)(len))),
             Action::KeyAgree {
                 key, peer_public, ..
             } => match self.device.key_agree(&key, &peer_public) {
@@ -411,6 +431,35 @@ mod tests {
         );
         assert!(harness.store.is_empty());
         assert_eq!(harness.transcript.len(), 9);
+    }
+
+    #[test]
+    fn draws_random_bytes_from_the_given_source() {
+        let mut engine = engine(vec![random(3)]);
+        let mut harness = Harness::new(Pump::default());
+        harness.random = |len| vec![9; len];
+        harness.run(&mut engine).unwrap();
+        assert_eq!(engine.completions, ["Secret(Secret(3 bytes))"]);
+    }
+
+    #[test]
+    fn violations_explain_themselves() {
+        let messages = [
+            Violation::ResentAfterTimeout(vec![0xAB]),
+            Violation::CompletionRejected(CompletionError::NotPending),
+            Violation::NeverSettled,
+            Violation::UnannouncedSubscribe(UUID, PROGRESS),
+        ]
+        .map(|violation| violation.to_string());
+        assert_eq!(
+            messages,
+            [
+                "write [ab] resent after a timeout",
+                "completion rejected: no pending operation with this id",
+                "engine never settled",
+                "subscribed to unannounced 00000000-0000-0000-0000-000000000000/02020202-0202-0202-0202-020202020202",
+            ]
+        );
     }
 
     #[test]

@@ -1,0 +1,21 @@
+[package]
+name = "tester-ble"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Runs a device engine against a hardware simulator over a real BLE central"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/u-osaid/tester"
+keywords = ["simulation", "testing", "ble", "medical-device"]
+categories = ["development-tools::testing"]
+
+[features]
+radio = ["dep:btleplug", "dep:futures", "dep:serialport", "dep:tokio"]
+
+[dependencies]
+btleplug = { version = "0.13", optional = true }
+futures = { version = "0.3", optional = true }
+getrandom = "0.3"
+pump-shared = { git = "https://github.com/u-osaid/pump-shared", branch = "main", features = ["sim"] }
+serialport = { version = "4.10", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
