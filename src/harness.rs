@@ -1,18 +1,22 @@
 use core::time::Duration;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::format;
 use std::string::String;
 use std::vec::Vec;
 
 use pump_shared::{
-    Action, BleOp, BleResult, Completion, CompletionError, Engine, Event, KeyRef, Secret, Slot,
-    Timestamp,
+    Action, BleOp, BleResult, Completion, CompletionError, DriverInfo, Engine, Event, KeyRef,
+    Notification, Secret, Slot, Timestamp, Uuid,
 };
 
 pub trait SimDevice {
     fn handle(&mut self, op: &BleOp, now: Timestamp) -> BleResult;
 
     fn key_agree(&mut self, _key: &KeyRef, _peer_public: &[u8; 32]) -> Option<[u8; 32]> {
+        None
+    }
+
+    fn poll_notification(&mut self, _now: Timestamp) -> Option<Notification> {
         None
     }
 }
@@ -30,6 +34,7 @@ pub enum Violation {
     ResentAfterTimeout(Vec<u8>),
     CompletionRejected(CompletionError),
     NeverSettled,
+    UnannouncedSubscribe(Uuid, Uuid),
 }
 
 #[derive(Debug)]
@@ -40,6 +45,8 @@ pub struct Harness<D> {
     pub events: Vec<Event>,
     pub transcript: Vec<String>,
     pub faults: BTreeMap<usize, Fault>,
+    pub announced: Option<&'static DriverInfo>,
+    subscribed: BTreeSet<(Uuid, Uuid)>,
     actions: usize,
     timed_out_write: Option<Vec<u8>>,
 }
@@ -55,6 +62,8 @@ impl<D: SimDevice> Harness<D> {
             events: Vec::new(),
             transcript: Vec::new(),
             faults: BTreeMap::new(),
+            announced: None,
+            subscribed: BTreeSet::new(),
             actions: 0,
             timed_out_write: None,
         }
@@ -62,6 +71,7 @@ impl<D: SimDevice> Harness<D> {
 
     pub fn run(&mut self, engine: &mut dyn Engine) -> Result<(), Violation> {
         for _ in 0..MAX_STEPS {
+            self.deliver_notifications(engine);
             self.events
                 .extend(core::iter::from_fn(|| engine.poll_event()));
             let Some(action) = engine.poll_action() else {
@@ -89,6 +99,16 @@ impl<D: SimDevice> Harness<D> {
         }
         self.now = end;
         Ok(())
+    }
+
+    fn deliver_notifications(&mut self, engine: &mut dyn Engine) {
+        while let Some(notification) = self.device.poll_notification(self.now) {
+            let key = (notification.service, notification.characteristic);
+            if self.subscribed.contains(&key) {
+                self.transcript.push(format!("{notification:?}"));
+                engine.handle_notification(notification);
+            }
+        }
     }
 
     fn perform(&mut self, action: Action) -> Result<Completion, Violation> {
@@ -130,6 +150,19 @@ impl<D: SimDevice> Harness<D> {
         if written.is_some() && written == self.timed_out_write {
             return Err(Violation::ResentAfterTimeout(written.unwrap_or_default()));
         }
+        if let BleOp::Subscribe {
+            service,
+            characteristic,
+            kind,
+        } = op
+        {
+            if self
+                .announced
+                .is_some_and(|info| info.listens(service, characteristic) != Some(kind))
+            {
+                return Err(Violation::UnannouncedSubscribe(service, characteristic));
+            }
+        }
         let result = match fault {
             Some(Fault::BleTimeout) => BleResult::Timeout,
             Some(Fault::BleDisconnected) => BleResult::Disconnected,
@@ -138,6 +171,24 @@ impl<D: SimDevice> Harness<D> {
         };
         if result == BleResult::Timeout {
             self.timed_out_write = written;
+        }
+        if result == BleResult::Done {
+            match op {
+                BleOp::Subscribe {
+                    service,
+                    characteristic,
+                    ..
+                } => {
+                    self.subscribed.insert((service, characteristic));
+                }
+                BleOp::Unsubscribe {
+                    service,
+                    characteristic,
+                } => {
+                    self.subscribed.remove(&(service, characteristic));
+                }
+                _ => {}
+            }
         }
         Ok(result)
     }
@@ -150,8 +201,8 @@ mod tests {
     use std::vec;
 
     use pump_shared::{
-        BleOp, Class, Command, CommandId, EngineState, OpId, SubmitError, TherapyMachine,
-        TherapyState, UtcTime, Uuid,
+        BleOp, Class, Command, CommandId, EngineState, GattChar, Kind, NotifyKind, OpId,
+        SubmitError, TherapyMachine, TherapyState, UtcTime, Variant,
     };
 
     #[derive(Default)]
@@ -161,6 +212,7 @@ mod tests {
         timeouts: VecDeque<Timestamp>,
         completions: Vec<String>,
         woken: Vec<Timestamp>,
+        notified: Vec<Notification>,
         reject: bool,
         endless: bool,
         therapy: TherapyState,
@@ -206,6 +258,10 @@ mod tests {
 
         fn handle_link_lost(&mut self) {}
 
+        fn handle_notification(&mut self, notification: Notification) {
+            self.notified.push(notification);
+        }
+
         fn poll_action(&mut self) -> Option<Action> {
             if self.endless {
                 return Some(random(1));
@@ -229,6 +285,7 @@ mod tests {
     #[derive(Default)]
     struct Pump {
         agrees_keys: bool,
+        pending: VecDeque<Notification>,
     }
 
     impl SimDevice for Pump {
@@ -244,6 +301,10 @@ mod tests {
                 return Some(*peer_public);
             }
             SimDevice::key_agree(&mut NoKeys, key, peer_public)
+        }
+
+        fn poll_notification(&mut self, _now: Timestamp) -> Option<Notification> {
+            self.pending.pop_front()
         }
     }
 
@@ -354,9 +415,12 @@ mod tests {
     #[test]
     fn simulator_can_agree_keys() {
         let mut engine = engine(vec![key_agree()]);
-        Harness::new(Pump { agrees_keys: true })
-            .run(&mut engine)
-            .unwrap();
+        Harness::new(Pump {
+            agrees_keys: true,
+            ..Pump::default()
+        })
+        .run(&mut engine)
+        .unwrap();
         assert_eq!(engine.completions, ["Secret(Secret(32 bytes))"]);
     }
 
@@ -470,5 +534,121 @@ mod tests {
             NoKeys.handle(&BleOp::Disconnect, Timestamp::default()),
             BleResult::Failed
         );
+        assert_eq!(NoKeys.poll_notification(Timestamp::default()), None);
+    }
+
+    const PROGRESS: Uuid = Uuid::from_bytes([2; 16]);
+
+    static INFO: DriverInfo = DriverInfo {
+        id: "sim",
+        name: "Sim",
+        kind: Kind::Pump,
+        version: "0",
+        api_version: pump_shared::API_VERSION,
+        protocol: "sim",
+        ble: pump_shared::BleMatch {
+            name_prefixes: &[],
+            service_uuids: &[],
+            manufacturer_id: None,
+        },
+        gatt: &[GattChar {
+            name: "progress",
+            service: UUID,
+            characteristic: PROGRESS,
+            notify: Some(NotifyKind::Notification),
+        }],
+        variants: &[Variant {
+            id: "sim",
+            name: "Sim",
+        }],
+        commands: &[],
+        features: &[],
+        slots: &[],
+    };
+
+    fn subscribe(characteristic: Uuid, kind: NotifyKind) -> Action {
+        Action::Ble {
+            id: ID,
+            op: BleOp::Subscribe {
+                service: UUID,
+                characteristic,
+                kind,
+            },
+        }
+    }
+
+    fn progress(byte: u8) -> Notification {
+        Notification {
+            service: UUID,
+            characteristic: PROGRESS,
+            data: vec![byte],
+        }
+    }
+
+    fn pump_notifying(bytes: &[u8]) -> Pump {
+        Pump {
+            pending: bytes.iter().map(|b| progress(*b)).collect(),
+            ..Pump::default()
+        }
+    }
+
+    #[test]
+    fn delivers_notifications_only_while_subscribed() {
+        let mut harness = Harness::new(pump_notifying(&[1]));
+        let mut scripted = engine(vec![]);
+        harness.run(&mut scripted).unwrap();
+        assert!(scripted.notified.is_empty());
+
+        let mut harness = Harness::new(pump_notifying(&[]));
+        let mut scripted = engine(vec![
+            subscribe(PROGRESS, NotifyKind::Notification),
+            random(1),
+        ]);
+        harness.run(&mut scripted).unwrap();
+        harness.device.pending.push_back(progress(2));
+        scripted.actions.push_back(Action::Ble {
+            id: ID,
+            op: BleOp::Unsubscribe {
+                service: UUID,
+                characteristic: PROGRESS,
+            },
+        });
+        scripted.actions.push_back(random(1));
+        harness.run(&mut scripted).unwrap();
+        harness.device.pending.push_back(progress(3));
+        harness.run(&mut scripted).unwrap();
+        assert_eq!(scripted.notified, [progress(2)]);
+    }
+
+    #[test]
+    fn a_failed_subscribe_does_not_subscribe() {
+        let mut harness = Harness::new(pump_notifying(&[]));
+        harness.faults.insert(1, Fault::BleStatus(0x05));
+        let mut scripted = engine(vec![
+            subscribe(PROGRESS, NotifyKind::Notification),
+            random(1),
+        ]);
+        harness.run(&mut scripted).unwrap();
+        harness.device.pending.push_back(progress(1));
+        harness.run(&mut scripted).unwrap();
+        assert!(scripted.notified.is_empty());
+    }
+
+    #[test]
+    fn flags_a_subscription_the_driver_did_not_announce() {
+        let mut harness = Harness::new(Pump::default());
+        harness.announced = Some(&INFO);
+        let mut scripted = engine(vec![subscribe(PROGRESS, NotifyKind::Indication)]);
+        assert_eq!(
+            harness.run(&mut scripted),
+            Err(Violation::UnannouncedSubscribe(UUID, PROGRESS))
+        );
+        let mut scripted = engine(vec![subscribe(UUID, NotifyKind::Notification)]);
+        assert_eq!(
+            harness.run(&mut scripted),
+            Err(Violation::UnannouncedSubscribe(UUID, UUID))
+        );
+        let mut scripted = engine(vec![subscribe(PROGRESS, NotifyKind::Notification)]);
+        assert_eq!(harness.run(&mut scripted), Ok(()));
     }
 }
