@@ -37,7 +37,7 @@ pub struct Harness<D> {
     pub resendable: BTreeSet<Uuid>,
     subscribed: BTreeSet<(Uuid, Uuid)>,
     actions: usize,
-    timed_out_write: Option<Vec<u8>>,
+    timed_out_write: Option<(Uuid, Vec<u8>)>,
 }
 
 const MAX_STEPS: usize = 100_000;
@@ -138,11 +138,17 @@ impl<D: SimDevice> Harness<D> {
                 characteristic,
                 data,
                 ..
-            } if !self.resendable.contains(characteristic) => Some(data.clone()),
+            } if !self.resendable.contains(characteristic) => Some((*characteristic, data.clone())),
             _ => None,
         };
-        if written.is_some() && written == self.timed_out_write {
-            return Err(Violation::ResentAfterTimeout(written.unwrap_or_default()));
+        if let Some((characteristic, data)) = &written {
+            match &self.timed_out_write {
+                Some(timed_out) if timed_out == &(*characteristic, data.clone()) => {
+                    return Err(Violation::ResentAfterTimeout(data.clone()));
+                }
+                Some((timed_out, _)) if timed_out == characteristic => self.timed_out_write = None,
+                _ => {}
+            }
         }
         if let BleOp::Subscribe {
             service,
@@ -654,5 +660,43 @@ mod tests {
         harness.resendable.insert(UUID);
         let mut scripted = engine(vec![write(vec![9]), write(vec![9])]);
         assert_eq!(harness.run(&mut scripted), Ok(()));
+    }
+
+    fn write_to(characteristic: Uuid, data: Vec<u8>) -> Action {
+        Action::Ble {
+            id: ID,
+            op: BleOp::Write {
+                service: UUID,
+                characteristic,
+                data,
+            },
+        }
+    }
+
+    #[test]
+    fn a_new_message_on_the_same_characteristic_clears_a_timed_out_frame() {
+        let mut harness = Harness::new(Pump::default());
+        harness.faults.insert(1, Fault::BleTimeout);
+        let mut scripted = engine(vec![
+            write(vec![1, 0]),
+            write(vec![2, 0]),
+            write(vec![1, 0]),
+        ]);
+        assert_eq!(harness.run(&mut scripted), Ok(()));
+    }
+
+    #[test]
+    fn the_same_bytes_on_another_characteristic_do_not_clear_the_timeout() {
+        let mut harness = Harness::new(Pump::default());
+        harness.faults.insert(1, Fault::BleTimeout);
+        let mut scripted = engine(vec![
+            write(vec![9]),
+            write_to(PROGRESS, vec![7]),
+            write(vec![9]),
+        ]);
+        assert_eq!(
+            harness.run(&mut scripted),
+            Err(Violation::ResentAfterTimeout(vec![9]))
+        );
     }
 }
