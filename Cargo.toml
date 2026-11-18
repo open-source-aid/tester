@@ -1,12 +1,9 @@
-[workspace]
-members = [".", "xtask"]
-
 [package]
 name = "pump-testkit"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
-description = "Simulation harness and state machine graphs for pump-shared drivers"
+description = "Simulation harness for pump-shared drivers"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/u-osaid/pump-testkit"
 keywords = ["insulin", "pump", "simulation", "testing"]
