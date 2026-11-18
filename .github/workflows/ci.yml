@@ -14,6 +14,6 @@ jobs:
         with:
           components: rustfmt, clippy, llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo llvm-cov --fail-under-lines 100 --fail-under-regions 100 --fail-under-functions 100
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo llvm-cov --workspace --fail-under-lines 100 --fail-under-regions 100 --fail-under-functions 100

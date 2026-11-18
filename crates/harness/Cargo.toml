@@ -1,0 +1,13 @@
+[package]
+name = "tester-harness"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "In-process harness: runs a device engine against a simulator with virtual time, faults and invariants"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/u-osaid/tester"
+keywords = ["simulation", "testing", "ble", "medical-device"]
+categories = ["development-tools::testing"]
+
+[dependencies]
+pump-shared = { git = "https://github.com/u-osaid/pump-shared", branch = "main", features = ["sim"] }
