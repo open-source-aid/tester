@@ -171,14 +171,16 @@ impl Link {
     }
 
     async fn connect(&mut self) -> Result<BleResult, Error> {
-        let peripheral = match self.peripheral.take() {
-            Some(known) => known,
-            None => self.scan().await?,
+        self.peripheral = None;
+        let peripheral = loop {
+            self.adapter.clear_peripherals().await?;
+            let candidate = self.scan().await?;
+            if candidate.connect().await.is_ok() {
+                break candidate;
+            }
+            tokio::time::sleep(SCAN_POLL).await;
         };
         let peripheral = self.peripheral.insert(peripheral);
-        while peripheral.connect().await.is_err() {
-            tokio::time::sleep(SCAN_POLL).await;
-        }
         peripheral.discover_services().await?;
         let mut stream = peripheral.notifications().await?;
         let sender = self.sender.clone();
