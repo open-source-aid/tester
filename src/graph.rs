@@ -5,8 +5,8 @@ use std::string::String;
 use std::vec::Vec;
 
 use pump_shared::{
-    Basal, Bolus, Extended, InsulinAmount, Percent, PumpMode, TherapyMachine, TherapyState,
-    Transition,
+    Basal, Bolus, Extended, InsulinAmount, Percent, PumpMode, TempBasalRate, TherapyMachine,
+    TherapyState, Transition,
 };
 
 const REGIONS: [&str; 4] = ["mode", "basal", "bolus", "extended"];
@@ -147,8 +147,8 @@ impl Graph {
     }
 }
 
-fn units(hundredths: u32) -> InsulinAmount {
-    InsulinAmount::from_hundredths(hundredths)
+fn units(milliunits: u32) -> InsulinAmount {
+    InsulinAmount::from_milliunits(milliunits)
 }
 
 fn sample_states() -> Vec<TherapyState> {
@@ -163,7 +163,7 @@ fn sample_states() -> Vec<TherapyState> {
         Basal::Unknown,
         Basal::Scheduled,
         Basal::Temporary {
-            rate: Percent::new(150),
+            rate: TempBasalRate::Percent(Percent::new(150)),
             duration: hour,
         },
     ];
@@ -215,7 +215,7 @@ fn sample_transitions() -> [Transition; 11] {
         },
         Transition::BolusEnded,
         Transition::TempBasalStarted {
-            rate: Percent::new(150),
+            rate: TempBasalRate::Percent(Percent::new(150)),
             duration: hour,
         },
         Transition::TempBasalEnded,
