@@ -1,0 +1,41 @@
+flowchart LR
+    r_mode["mode<br/>Unknown · Off · Suspended · Running"]
+    r_basal["basal<br/>Unknown · Scheduled · Temporary"]
+    r_bolus["bolus<br/>Unknown · Idle · Immediate"]
+    r_extended["extended<br/>Unknown · Idle · Running"]
+    t_Suspended([Suspended])
+    t_Suspended --> r_mode
+    t_Suspended --> r_basal
+    t_Suspended --> r_bolus
+    t_Suspended --> r_extended
+    t_Resumed([Resumed])
+    r_mode -. Suspended .-> t_Resumed
+    t_Resumed --> r_mode
+    t_TurnedOff([TurnedOff])
+    t_TurnedOff --> r_mode
+    t_TurnedOff --> r_basal
+    t_TurnedOff --> r_bolus
+    t_TurnedOff --> r_extended
+    t_BolusStarted([BolusStarted])
+    r_bolus -. Idle .-> t_BolusStarted
+    r_mode -. Running .-> t_BolusStarted
+    t_BolusStarted --> r_bolus
+    t_BolusProgressed([BolusProgressed])
+    r_bolus -. Immediate .-> t_BolusProgressed
+    t_BolusProgressed --> r_bolus
+    t_BolusEnded([BolusEnded])
+    t_BolusEnded --> r_bolus
+    t_TempBasalStarted([TempBasalStarted])
+    r_mode -. Running .-> t_TempBasalStarted
+    t_TempBasalStarted --> r_basal
+    t_TempBasalEnded([TempBasalEnded])
+    t_TempBasalEnded --> r_basal
+    t_ExtendedStarted([ExtendedStarted])
+    r_extended -. Idle .-> t_ExtendedStarted
+    r_mode -. Running .-> t_ExtendedStarted
+    t_ExtendedStarted --> r_extended
+    t_ExtendedEnded([ExtendedEnded])
+    t_ExtendedEnded --> r_extended
+    t_LinkLost([LinkLost])
+    t_LinkLost --> r_bolus
+    t_LinkLost --> r_extended
