@@ -34,6 +34,7 @@ pub struct Harness<D> {
     pub transcript: Vec<String>,
     pub faults: BTreeMap<usize, Fault>,
     pub announced: Option<&'static DriverInfo>,
+    pub resendable: BTreeSet<Uuid>,
     subscribed: BTreeSet<(Uuid, Uuid)>,
     actions: usize,
     timed_out_write: Option<Vec<u8>>,
@@ -51,6 +52,7 @@ impl<D: SimDevice> Harness<D> {
             transcript: Vec::new(),
             faults: BTreeMap::new(),
             announced: None,
+            resendable: BTreeSet::new(),
             subscribed: BTreeSet::new(),
             actions: 0,
             timed_out_write: None,
@@ -132,7 +134,11 @@ impl<D: SimDevice> Harness<D> {
 
     fn ble(&mut self, op: BleOp, fault: Option<Fault>) -> Result<BleResult, Violation> {
         let written = match &op {
-            BleOp::Write { data, .. } => Some(data.clone()),
+            BleOp::Write {
+                characteristic,
+                data,
+                ..
+            } if !self.resendable.contains(characteristic) => Some(data.clone()),
             _ => None,
         };
         if written.is_some() && written == self.timed_out_write {
@@ -638,6 +644,15 @@ mod tests {
             Err(Violation::UnannouncedSubscribe(UUID, UUID))
         );
         let mut scripted = engine(vec![subscribe(PROGRESS, NotifyKind::Notification)]);
+        assert_eq!(harness.run(&mut scripted), Ok(()));
+    }
+
+    #[test]
+    fn a_declared_resendable_write_may_be_sent_again() {
+        let mut harness = Harness::new(Pump::default());
+        harness.faults.insert(1, Fault::BleTimeout);
+        harness.resendable.insert(UUID);
+        let mut scripted = engine(vec![write(vec![9]), write(vec![9])]);
         assert_eq!(harness.run(&mut scripted), Ok(()));
     }
 }
