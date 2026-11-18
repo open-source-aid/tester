@@ -176,7 +176,9 @@ impl Link {
             None => self.scan().await?,
         };
         let peripheral = self.peripheral.insert(peripheral);
-        peripheral.connect().await?;
+        while peripheral.connect().await.is_err() {
+            tokio::time::sleep(SCAN_POLL).await;
+        }
         peripheral.discover_services().await?;
         let mut stream = peripheral.notifications().await?;
         let sender = self.sender.clone();
