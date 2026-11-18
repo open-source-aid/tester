@@ -5,21 +5,9 @@ use std::string::String;
 use std::vec::Vec;
 
 use pump_shared::{
-    Action, BleOp, BleResult, Completion, CompletionError, DriverInfo, Engine, Event, KeyRef,
-    Notification, Secret, Slot, Timestamp, Uuid,
+    Action, BleOp, BleResult, Completion, CompletionError, DriverInfo, Engine, Event, Secret,
+    SimDevice, Slot, Timestamp, Uuid,
 };
-
-pub trait SimDevice {
-    fn handle(&mut self, op: &BleOp, now: Timestamp) -> BleResult;
-
-    fn key_agree(&mut self, _key: &KeyRef, _peer_public: &[u8; 32]) -> Option<[u8; 32]> {
-        None
-    }
-
-    fn poll_notification(&mut self, _now: Timestamp) -> Option<Notification> {
-        None
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Fault {
@@ -197,6 +185,7 @@ impl<D: SimDevice> Harness<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pump_shared::{KeyRef, Notification};
     use std::collections::VecDeque;
     use std::vec;
 

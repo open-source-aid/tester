@@ -10,4 +10,4 @@ keywords = ["insulin", "pump", "simulation", "testing"]
 categories = ["development-tools::testing"]
 
 [dependencies]
-pump-shared = { git = "https://github.com/u-osaid/pump-shared", branch = "main" }
+pump-shared = { git = "https://github.com/u-osaid/pump-shared", branch = "main", features = ["sim"] }
