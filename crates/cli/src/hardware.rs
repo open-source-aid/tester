@@ -2,12 +2,12 @@ use std::path::Path;
 use std::time::Instant;
 
 use pump_shared::{BleOp, BleResult, Notification, SimDevice, Timestamp};
+use pump_ypso::sim::YpsoSim;
 use serialport::SerialPort;
 use tester_ble::{open_console, os_random, Console, Radio, SimulatorName};
 
 use crate::args::Mode;
 use crate::session::{Board, Clock, Session};
-use crate::ypso;
 
 pub struct Hardware {
     radio: Radio,
@@ -29,6 +29,10 @@ impl Board for Hardware {
         let console = self.console.as_mut().ok_or("no --console given")?;
         console.send(line).map_err(|e| e.to_string())
     }
+
+    fn pump(&mut self) -> Option<&mut YpsoSim> {
+        None
+    }
 }
 
 pub fn session(
@@ -41,11 +45,11 @@ pub fn session(
         .transpose()
         .map_err(|e| format!("console: {e}"))?;
     let radio = Radio::new(name).map_err(|e| format!("bluetooth: {e}"))?;
-    let mut harness = ypso::harness(Hardware { radio, console }, mode);
-    harness.random = os_random;
-    Ok(Session::new(
-        harness,
-        ypso::engine(),
+    let mut session = Session::new(
+        Hardware { radio, console },
+        mode,
         Clock::Real(Instant::now()),
-    ))
+    );
+    session.harness.random = os_random;
+    Ok(session)
 }

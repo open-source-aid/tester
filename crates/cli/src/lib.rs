@@ -19,9 +19,10 @@ pub fn run<D: Board>(mut session: Session<D>, out: &mut dyn Write) -> bool {
     for (name, scenario) in all() {
         scenario(&mut session);
         let result = session.result();
-        passed &= result.is_ok();
+        passed &= matches!(result, Ok(()) | Err(Error::Skipped(_)));
         let _ = match result {
             Ok(()) => writeln!(out, "pass  {name}"),
+            Err(skipped @ Error::Skipped(_)) => writeln!(out, "skip  {name}: {skipped}"),
             Err(error) => writeln!(out, "FAIL  {name}: {error}"),
         };
     }
@@ -38,11 +39,7 @@ pub fn main(
             target: Target::Sim,
             mode,
         }) => Ok(run(
-            Session::new(
-                ypso::harness(ypso::board(mode), mode),
-                ypso::engine(),
-                Clock::Virtual,
-            ),
+            Session::new(ypso::board(mode), mode, Clock::Virtual),
             out,
         )),
         #[cfg(feature = "radio")]
@@ -72,7 +69,7 @@ mod tests {
     use pump_ypso::sim::YpsoSim;
 
     fn session(board: YpsoSim, mode: Mode) -> Session<YpsoSim> {
-        Session::new(ypso::harness(board, mode), ypso::engine(), Clock::Virtual)
+        Session::new(board, mode, Clock::Virtual)
     }
 
     fn report(board: YpsoSim, mode: Mode) -> (bool, String) {
@@ -94,7 +91,8 @@ mod tests {
     fn reports_each_failing_scenario() {
         let (passed, out) = report(YpsoSim::new([0; 32], [0x5A; 16]), Mode::Opn);
         assert!(!passed);
-        assert_eq!(out.lines().filter(|l| l.starts_with("FAIL")).count(), 8);
+        let count = |kind: &str| out.lines().filter(|l| l.starts_with(kind)).count();
+        assert_eq!((count("FAIL"), count("skip"), count("pass")), (33, 7, 1));
         assert!(out.starts_with("FAIL  connect and status: unexpected status Failed("));
     }
 

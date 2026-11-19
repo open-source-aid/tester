@@ -49,6 +49,7 @@ pub struct Harness<D> {
     pub events: Vec<Event>,
     pub transcript: Vec<String>,
     pub faults: BTreeMap<usize, Fault>,
+    pub write_faults: BTreeMap<Uuid, Fault>,
     pub announced: Option<&'static DriverInfo>,
     pub resendable: BTreeSet<Uuid>,
     pub random: fn(usize) -> Vec<u8>,
@@ -72,6 +73,7 @@ impl<D: SimDevice> Harness<D> {
             events: Vec::new(),
             transcript: Vec::new(),
             faults: BTreeMap::new(),
+            write_faults: BTreeMap::new(),
             announced: None,
             resendable: BTreeSet::new(),
             random: counting,
@@ -97,6 +99,14 @@ impl<D: SimDevice> Harness<D> {
                 .map_err(Violation::CompletionRejected)?;
         }
         Err(Violation::NeverSettled)
+    }
+
+    pub fn restart(&mut self) {
+        self.events.clear();
+        self.faults.clear();
+        self.write_faults.clear();
+        self.subscribed.clear();
+        self.timed_out_write = None;
     }
 
     pub fn advance(&mut self, engine: &mut dyn Engine, by: Duration) -> Result<(), Violation> {
@@ -125,7 +135,14 @@ impl<D: SimDevice> Harness<D> {
 
     fn perform(&mut self, action: Action) -> Result<Completion, Violation> {
         self.actions += 1;
-        let fault = self.faults.get(&self.actions).copied();
+        let fault = match &action {
+            Action::Ble {
+                op: BleOp::Write { characteristic, .. },
+                ..
+            } => self.write_faults.remove(characteristic),
+            _ => None,
+        }
+        .or_else(|| self.faults.get(&self.actions).copied());
         if fault == Some(Fault::HostFails) && !matches!(action, Action::Ble { .. }) {
             return Ok(Completion::Failed);
         }
@@ -499,6 +516,19 @@ mod tests {
     }
 
     #[test]
+    fn injects_a_fault_into_the_first_write_to_a_characteristic() {
+        let mut engine = engine(vec![read(), write(vec![1]), write(vec![2])]);
+        let mut harness = Harness::new(Pump::default());
+        harness.write_faults.insert(UUID, Fault::BleStatus(0x87));
+        harness.run(&mut engine).unwrap();
+        assert_eq!(
+            engine.completions,
+            ["Ble(Data([170]))", "Ble(Status(135))", "Ble(Done)"]
+        );
+        assert!(harness.write_faults.is_empty());
+    }
+
+    #[test]
     fn flags_a_write_resent_after_timeout() {
         let mut engine = engine(vec![write(vec![9]), write(vec![9])]);
         let mut harness = Harness::new(Pump::default());
@@ -507,6 +537,21 @@ mod tests {
             harness.run(&mut engine),
             Err(Violation::ResentAfterTimeout(vec![9]))
         );
+    }
+
+    #[test]
+    fn a_restart_forgets_the_previous_engine() {
+        let mut engine = engine(vec![write(vec![9])]);
+        let mut harness = Harness::new(Pump::default());
+        harness.faults.insert(1, Fault::BleTimeout);
+        harness.write_faults.insert(UUID, Fault::BleTimeout);
+        harness.run(&mut engine).unwrap();
+        harness.faults.insert(9, Fault::BleTimeout);
+        harness.restart();
+        assert!(harness.events.is_empty() && harness.faults.is_empty());
+        assert!(harness.write_faults.is_empty());
+        let mut engine = self::engine(vec![write(vec![9])]);
+        assert_eq!(harness.run(&mut engine), Ok(()));
     }
 
     #[test]

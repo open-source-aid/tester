@@ -6,11 +6,12 @@ use simulator_bridge::{Command, Simulator};
 use tester_harness::Harness;
 
 use crate::args::Mode;
-use crate::session::Board;
+use crate::session::{Board, Store};
 
 pub const SERIAL: u32 = 0xDEAD_BEEF;
 const PASSWORD: [u8; PASSWORD_LEN] = [0x5A; PASSWORD_LEN];
-const KEY: [u8; KEY_LEN] = [0xA5; KEY_LEN];
+pub const KEY: [u8; KEY_LEN] = [0xA5; KEY_LEN];
+pub const CODE: &[u8; 2] = b"O2";
 const SERVER_KEY: [u8; KEY_LEN] = [
     0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE,
     0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE, 0xCA, 0xFE,
@@ -36,6 +37,10 @@ impl Board for YpsoSim {
         self.apply(command, now);
         Ok(())
     }
+
+    fn pump(&mut self) -> Option<&mut YpsoSim> {
+        Some(self)
+    }
 }
 
 pub fn engine() -> Box<dyn Engine> {
@@ -55,14 +60,19 @@ pub fn harness<D: SimDevice>(device: D, mode: Mode) -> Harness<D> {
     harness.announced = Some(DRIVER.info());
     harness.resendable.insert(uuids::AUTHORIZATION_PASSWORD);
     harness.resendable.insert(uuids::SETTING_ID);
-    harness.store.insert(Slot::Session, session(mode));
+    harness.resendable.insert(uuids::EVENT_ENTRY_INDEX);
+    harness.store = store(mode, KEY, CODE);
     harness
 }
 
-fn session(mode: Mode) -> Vec<u8> {
-    let (version, flags, key) = match mode {
-        Mode::Opn => (4, 1, [0; KEY_LEN]),
-        Mode::Encrypted => (1, 0, KEY),
+pub fn store(mode: Mode, key: [u8; KEY_LEN], code: &[u8; 2]) -> Store {
+    Store::from([(Slot::Session, blob(mode, key, code))])
+}
+
+fn blob(mode: Mode, key: [u8; KEY_LEN], code: &[u8; 2]) -> Vec<u8> {
+    let (version, flags) = match mode {
+        Mode::Opn => (4, 1),
+        Mode::Encrypted => (1, 0),
     };
     let mut out = b"YB".to_vec();
     out.extend([version, flags]);
@@ -76,7 +86,7 @@ fn session(mode: Mode) -> Vec<u8> {
     out.push(0);
     out.extend([7; 16]);
     out.extend([1, 2]);
-    out.extend(b"O2");
+    out.extend(code);
     out.extend(PASSWORD);
     let crc = crc32(&out);
     out.extend(crc.to_le_bytes());

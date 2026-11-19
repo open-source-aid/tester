@@ -1,12 +1,22 @@
 use core::fmt;
 use core::time::Duration;
+use std::collections::BTreeMap;
 use std::time::Instant;
 
-use pump_shared::{Command, CommandId, Engine, Event, Outcome, SimDevice, Timestamp};
+use pump_shared::{
+    BleOp, Command, CommandId, Engine, Event, Outcome, Sequence, SimDevice, Slot, Timestamp,
+};
+use pump_ypso::sim::YpsoSim;
 use tester_harness::{Harness, Violation};
+
+use crate::args::Mode;
+use crate::ypso;
+
+pub type Store = BTreeMap<Slot, Vec<u8>>;
 
 pub trait Board: SimDevice {
     fn console(&mut self, line: &str, now: Timestamp) -> Result<(), String>;
+    fn pump(&mut self) -> Option<&mut YpsoSim>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +32,7 @@ pub enum Error {
     Unfinished(CommandId),
     Console(String),
     Unexpected(String),
+    Skipped(&'static str),
 }
 
 impl fmt::Display for Error {
@@ -32,6 +43,7 @@ impl fmt::Display for Error {
             Self::Unfinished(id) => write!(f, "command {} never finished", id.get()),
             Self::Console(error) => write!(f, "console: {error}"),
             Self::Unexpected(what) => write!(f, "unexpected {what}"),
+            Self::Skipped(why) => f.write_str(why),
         }
     }
 }
@@ -40,21 +52,70 @@ impl std::error::Error for Error {}
 
 const LIMIT: Duration = Duration::from_secs(300);
 
+const UNREACHABLE: &str = "needs the pump's internal state, which the board console cannot reach";
+
 pub struct Session<D> {
     pub harness: Harness<D>,
     pub engine: Box<dyn Engine>,
+    pub mode: Mode,
+    pub seen: Sequence,
+    counters: Option<Vec<u8>>,
     clock: Clock,
     failure: Option<Error>,
 }
 
 impl<D: Board> Session<D> {
-    pub fn new(harness: Harness<D>, engine: Box<dyn Engine>, clock: Clock) -> Self {
+    pub fn new(device: D, mode: Mode, clock: Clock) -> Self {
         Self {
-            harness,
-            engine,
+            harness: ypso::harness(device, mode),
+            engine: ypso::engine(),
+            mode,
+            seen: Sequence::new(0),
+            counters: None,
             clock,
             failure: None,
         }
+    }
+
+    pub fn skip(&mut self, why: &'static str) {
+        self.fail(Error::Skipped(why));
+    }
+
+    pub fn tamper(&mut self, change: &mut dyn FnMut(&mut YpsoSim)) {
+        if self.failure.is_some() {
+            return;
+        }
+        let blind = self.harness.device.pump().map(change).is_none();
+        self.failure = blind.then_some(Error::Skipped(UNREACHABLE));
+    }
+
+    pub fn switch(&mut self, engine: Box<dyn Engine>, store: Store) -> (Box<dyn Engine>, Store) {
+        self.sync();
+        self.harness
+            .device
+            .handle(&BleOp::Disconnect, self.harness.now);
+        self.engine.handle_link_lost();
+        self.harness.restart();
+        let store = core::mem::replace(&mut self.harness.store, store);
+        let engine = core::mem::replace(&mut self.engine, engine);
+        self.wait(Duration::ZERO);
+        (engine, store)
+    }
+
+    pub fn restart(&mut self) {
+        let store = self.harness.store.clone();
+        self.switch(ypso::engine(), store);
+    }
+
+    pub fn fresh(&mut self) {
+        if let Some(counters) = self.harness.store.get(&Slot::Counters) {
+            self.counters = Some(counters.clone());
+        }
+        let mut store = ypso::store(self.mode, ypso::KEY, ypso::CODE);
+        if let Some(counters) = &self.counters {
+            store.insert(Slot::Counters, counters.clone());
+        }
+        self.switch(ypso::engine(), store);
     }
 
     pub fn result(&mut self) -> Result<(), Error> {
@@ -177,17 +238,51 @@ impl<D: Board> Session<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::args::Mode;
-    use crate::ypso;
-    use pump_ypso::sim::YpsoSim;
     use tester_harness::Fault;
 
     fn session(clock: Clock) -> Session<YpsoSim> {
-        Session::new(
-            ypso::harness(ypso::board(Mode::Opn), Mode::Opn),
-            ypso::engine(),
-            clock,
-        )
+        Session::new(ypso::board(Mode::Opn), Mode::Opn, clock)
+    }
+
+    struct Blind(YpsoSim);
+
+    impl SimDevice for Blind {
+        fn handle(&mut self, op: &BleOp, now: Timestamp) -> pump_shared::BleResult {
+            self.0.handle(op, now)
+        }
+    }
+
+    impl Board for Blind {
+        fn console(&mut self, line: &str, now: Timestamp) -> Result<(), String> {
+            self.0.console(line, now)
+        }
+
+        fn pump(&mut self) -> Option<&mut YpsoSim> {
+            None
+        }
+    }
+
+    fn drain(pump: &mut YpsoSim) {
+        pump.battery = 0;
+    }
+
+    #[test]
+    fn tampers_with_the_pump_state_in_process() {
+        let mut session = session(Clock::Virtual);
+        session.tamper(&mut drain);
+        assert_eq!(session.harness.device.battery, 0);
+    }
+
+    #[test]
+    fn skips_what_needs_the_pump_state_without_it() {
+        let mut session = Session::new(Blind(ypso::board(Mode::Opn)), Mode::Opn, Clock::Virtual);
+        session.console("battery 1");
+        session.command(Command::Status);
+        session.wait(Duration::ZERO);
+        session.tamper(&mut drain);
+        session.tamper(&mut drain);
+        assert_eq!(session.result(), Err(Error::Skipped(UNREACHABLE)));
+        assert_eq!(Error::Skipped(UNREACHABLE).to_string(), UNREACHABLE);
     }
 
     #[test]
@@ -196,6 +291,7 @@ mod tests {
         session.harness.resendable.clear();
         session.harness.faults.insert(12, Fault::BleTimeout);
         session.command(Command::Status);
+        session.wait(Duration::ZERO);
         assert_eq!(session.command(Command::Status), Outcome::Unknown);
         session.console("battery 1");
         session.check(false, "later".into());
