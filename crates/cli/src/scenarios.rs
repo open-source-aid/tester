@@ -1,10 +1,10 @@
-use core::mem::discriminant;
 use core::time::Duration;
 
 use pump_shared::{
-    Basal, BasalProfile, BasalRate, BasalSegment, Bolus, Command, CommandId, EngineState, Event,
-    Extended, Failure, HistoryEntry, HistoryEvent, InsulinAmount, Notification, Outcome, Percent,
-    PumpMode, PumpStatus, Refusal, Report, Sequence, Slot, TempBasalRate, UtcTime,
+    Basal, BasalProfile, BasalRate, BasalSegment, Bolus, BolusKind, Command, CommandId,
+    EngineState, Event, Extended, Failure, HistoryEntry, HistoryEvent, InsulinAmount, Notification,
+    Outcome, Percent, PumpMode, PumpStatus, Refusal, Report, Sequence, Slot, TempBasalPhase,
+    TempBasalRate, UtcTime,
 };
 use pump_ypso::protocol::{setting, uuids, KEY_LEN};
 use tester_harness::Fault;
@@ -381,11 +381,11 @@ fn temp_basal_expiry<D: Board>(session: &mut Session<D>) {
     session.wait(QUARTER + Duration::from_secs(30));
     basal(session, Basal::Scheduled);
     logged(session, |event| {
-        *event
-            == HistoryEvent::TempBasal {
-                rate: TempBasalRate::Percent(Percent::new(150)),
-                duration: QUARTER,
-            }
+        matches!(
+            event,
+            HistoryEvent::TempBasal { rate, duration, phase: TempBasalPhase::Ended }
+                if *rate == TempBasalRate::Percent(Percent::new(150)) && *duration == QUARTER
+        )
     });
 }
 
@@ -495,10 +495,17 @@ fn extended_bolus<D: Board>(session: &mut Session<D>) {
     }
     let idle = session.engine.therapy().extended;
     session.check(idle == Extended::Idle, format!("extended {idle:?}"));
-    let ended = discriminant(&HistoryEvent::ExtendedBolusEnded {
-        delivered: units(0),
+    logged(session, |event| {
+        *event
+            == HistoryEvent::Bolus {
+                kind: BolusKind::Extended,
+                requested: units(0),
+                delivered: units(0),
+                duration: Duration::ZERO,
+                automatic: false,
+                in_progress: false,
+            }
     });
-    logged(session, |event| discriminant(event) == ended);
     let refused = session.command(Command::ExtendedBolus {
         amount: units(50),
         duration: HOUR,
