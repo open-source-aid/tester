@@ -11,7 +11,10 @@ End-to-end testing for device drivers built on `pump-shared`: insulin pumps toda
 ```sh
 cargo run -p tester -- run --target sim
 cargo run -p tester --features radio -- run --target ble --name YpsoPump_3735928559 --console /dev/cu.usbmodem1101
+cargo run -p tester -- run --target sim --mode encrypted
 ```
+
+`--mode opn` (the default) drives a pump with no CryptoService through a version-4 session blob, matching the simulator's default firmware. `--mode encrypted` drives an encrypted pump (session key `[0xA5; 32]`) through a version-1 blob, matching the simulator built with `--no-default-features`. Both modes run the same scenarios. The in-process double uses the offline-pairing server key `0xCAFE` repeated, like the firmware.
 
 Over BLE the runner only connects to a peripheral whose advertised name equals `--name` exactly, and refuses any name that does not end with the simulator serial `3735928559` (0xDEADBEEF): real pumps may be in range. The radio code (`crates/ble/src/radio.rs`, `crates/cli/src/hardware.rs`) builds only with `--features radio` and is outside the coverage gate; everything else is covered at 100%.
 

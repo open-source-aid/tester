@@ -5,6 +5,7 @@ use pump_shared::{BleOp, BleResult, Notification, SimDevice, Timestamp};
 use serialport::SerialPort;
 use tester_ble::{open_console, os_random, Console, Radio, SimulatorName};
 
+use crate::args::Mode;
 use crate::session::{Board, Clock, Session};
 use crate::ypso;
 
@@ -30,13 +31,17 @@ impl Board for Hardware {
     }
 }
 
-pub fn session(name: SimulatorName, console: Option<&Path>) -> Result<Session<Hardware>, String> {
+pub fn session(
+    name: SimulatorName,
+    console: Option<&Path>,
+    mode: Mode,
+) -> Result<Session<Hardware>, String> {
     let console = console
         .map(open_console)
         .transpose()
         .map_err(|e| format!("console: {e}"))?;
     let radio = Radio::new(name).map_err(|e| format!("bluetooth: {e}"))?;
-    let mut harness = ypso::harness(Hardware { radio, console });
+    let mut harness = ypso::harness(Hardware { radio, console }, mode);
     harness.random = os_random;
     Ok(Session::new(
         harness,

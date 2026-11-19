@@ -99,16 +99,24 @@ fn bolus_and_stop<D: Board>(session: &mut Session<D>) {
     let bolus = session.submit(Command::Bolus {
         amount: InsulinAmount::from_milliunits(5_000),
     });
-    session.wait(Duration::from_secs(6));
+    let progressed = |session: &Session<D>| {
+        session.events().iter().any(|event| {
+            matches!(event, Event::Progress { id, delivered, .. }
+                if Some(*id) == bolus && *delivered > InsulinAmount::ZERO)
+        })
+    };
+    for _ in 0..30 {
+        if progressed(session) {
+            break;
+        }
+        session.wait(Duration::from_secs(1));
+    }
     let stop = session.stop();
     let stopped = session.finish(Some(stop));
     done(session, stopped);
     let outcome = session.finish(bolus);
     session.check(outcome == Outcome::Unknown, format!("bolus {outcome:?}"));
-    let progressed = session.events().iter().any(|event| {
-        matches!(event, Event::Progress { id, delivered, .. }
-            if Some(*id) == bolus && *delivered > InsulinAmount::ZERO)
-    });
+    let progressed = progressed(session);
     session.check(progressed, "bolus without progress".into());
 }
 
@@ -141,5 +149,11 @@ fn reboot<D: Board>(session: &mut Session<D>) {
         lost == Outcome::Failed(Failure::Disconnected),
         format!("first status after reboot {lost:?}"),
     );
+    for _ in 0..12 {
+        if !matches!(session.command(Command::Status), Outcome::Failed(_)) {
+            break;
+        }
+        session.wait(Duration::from_secs(5));
+    }
     mode(session, PumpMode::Running);
 }

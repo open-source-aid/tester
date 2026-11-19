@@ -8,11 +8,13 @@ fn tester(args: &str) -> Output {
 }
 
 #[test]
-fn runs_every_scenario_in_process() {
-    let output = tester("run --target sim");
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(output.status.success(), "{stdout}");
-    assert_eq!(stdout.lines().filter(|l| l.starts_with("pass")).count(), 8);
+fn runs_every_scenario_in_process_in_both_modes() {
+    for mode in ["opn", "encrypted"] {
+        let output = tester(&format!("run --target sim --mode {mode}"));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(output.status.success(), "{stdout}");
+        assert_eq!(stdout.lines().filter(|l| l.starts_with("pass")).count(), 8);
+    }
 }
 
 #[test]

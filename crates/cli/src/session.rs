@@ -177,12 +177,17 @@ impl<D: Board> Session<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::args::Mode;
     use crate::ypso;
     use pump_ypso::sim::YpsoSim;
     use tester_harness::Fault;
 
     fn session(clock: Clock) -> Session<YpsoSim> {
-        Session::new(ypso::harness(ypso::board()), ypso::engine(), clock)
+        Session::new(
+            ypso::harness(ypso::board(Mode::Opn), Mode::Opn),
+            ypso::engine(),
+            clock,
+        )
     }
 
     #[test]
@@ -194,7 +199,10 @@ mod tests {
         assert_eq!(session.command(Command::Status), Outcome::Unknown);
         session.console("battery 1");
         session.check(false, "later".into());
-        assert_eq!(session.harness.device.battery, ypso::board().battery);
+        assert_eq!(
+            session.harness.device.battery,
+            ypso::board(Mode::Opn).battery
+        );
         assert_eq!(
             session.result().unwrap_err().to_string(),
             "invariant violated: write [5a, 5a, 5a, 5a, 5a, 5a, 5a, 5a, 5a, 5a, 5a, 5a, 5a, 5a, 5a, 5a] resent after a timeout"

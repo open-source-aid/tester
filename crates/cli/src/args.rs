@@ -12,6 +12,18 @@ pub enum Target {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Opn,
+    Encrypted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    pub target: Target,
+    pub mode: Mode,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsageError {
     Usage,
@@ -22,7 +34,7 @@ impl fmt::Display for UsageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Usage => f.write_str(
-                "usage: tester run --target sim | tester run --target ble --name <exact simulator name> [--console <serial port>]",
+                "usage: tester run --target sim [--mode opn|encrypted] | tester run --target ble --name <exact simulator name> [--console <serial port>] [--mode opn|encrypted]",
             ),
             Self::Name(error) => error.fmt(f),
         }
@@ -37,31 +49,39 @@ impl From<NameError> for UsageError {
     }
 }
 
-pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Target, UsageError> {
+pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Run, UsageError> {
     let mut args = args.into_iter();
     if args.next().as_deref() != Some("run") {
         return Err(UsageError::Usage);
     }
-    let (mut target, mut name, mut console) = (None, None, None);
-    while let (Some(flag), Some(value)) = (args.next(), args.next()) {
+    let (mut target, mut name, mut console, mut mode) = (None, None, None, None);
+    while let Some(flag) = args.next() {
+        let value = args.next().ok_or(UsageError::Usage)?;
         let slot = match flag.as_str() {
             "--target" => &mut target,
             "--name" => &mut name,
             "--console" => &mut console,
+            "--mode" => &mut mode,
             _ => return Err(UsageError::Usage),
         };
         if slot.replace(value).is_some() {
             return Err(UsageError::Usage);
         }
     }
-    match (target.as_deref(), name, console) {
-        (Some("sim"), None, None) => Ok(Target::Sim),
-        (Some("ble"), Some(name), console) => Ok(Target::Ble {
+    let mode = match mode.as_deref() {
+        None | Some("opn") => Mode::Opn,
+        Some("encrypted") => Mode::Encrypted,
+        _ => return Err(UsageError::Usage),
+    };
+    let target = match (target.as_deref(), name, console) {
+        (Some("sim"), None, None) => Target::Sim,
+        (Some("ble"), Some(name), console) => Target::Ble {
             name: name.parse()?,
             console: console.map(PathBuf::from),
-        }),
-        _ => Err(UsageError::Usage),
-    }
+        },
+        _ => return Err(UsageError::Usage),
+    };
+    Ok(Run { target, mode })
 }
 
 #[cfg(test)]
@@ -69,7 +89,24 @@ mod tests {
     use super::*;
 
     fn parse_line(line: &str) -> Result<Target, UsageError> {
+        parse(line.split_whitespace().map(String::from)).map(|run| run.target)
+    }
+
+    fn mode(line: &str) -> Mode {
         parse(line.split_whitespace().map(String::from))
+            .unwrap()
+            .mode
+    }
+
+    #[test]
+    fn parses_both_modes_and_defaults_to_opn() {
+        assert_eq!(mode("run --target sim"), Mode::Opn);
+        assert_eq!(mode("run --target sim --mode opn"), Mode::Opn);
+        assert_eq!(mode("run --mode encrypted --target sim"), Mode::Encrypted);
+        assert_eq!(
+            mode("run --target ble --name YpsoPump_3735928559 --mode encrypted"),
+            Mode::Encrypted
+        );
     }
 
     #[test]
@@ -122,6 +159,9 @@ mod tests {
             "run --target sim --console /dev/null",
             "run --target sim --target sim",
             "run --target sim --verbose yes",
+            "run --target sim --mode",
+            "run --target sim --mode clear",
+            "run --target sim --mode opn --mode opn",
         ] {
             assert_eq!(parse_line(line), Err(UsageError::Usage), "{line}");
         }
