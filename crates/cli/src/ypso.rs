@@ -2,7 +2,7 @@ use pump_shared::{Address, Advertisement, Config, Driver, Engine, SimDevice, Slo
 use pump_ypso::protocol::{setting, uuids, KEY_LEN};
 use pump_ypso::sim::{YpsoSim, PASSWORD_LEN};
 use pump_ypso::DRIVER;
-use simulator_bridge::{Command, Simulator};
+use simulator_bridge::{Line, Simulator};
 use tester_harness::Harness;
 
 use crate::args::Mode;
@@ -33,8 +33,10 @@ pub fn board(mode: Mode) -> YpsoSim {
 
 impl Board for YpsoSim {
     fn console(&mut self, line: &str, now: Timestamp) -> Result<(), String> {
-        let command: Command = line.parse().map_err(|e| format!("{e}"))?;
-        self.apply(command, now);
+        match line.parse().map_err(|e| format!("{e}"))? {
+            Line::Knob(command) => self.apply(command, now),
+            Line::Advance(_) => {}
+        }
         Ok(())
     }
 

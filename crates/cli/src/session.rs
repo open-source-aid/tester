@@ -178,7 +178,16 @@ impl<D: Board> Session<D> {
     }
 
     pub fn wait(&mut self, by: Duration) {
-        let until = self.later(by);
+        let until = if let Clock::Real(start) = self.clock {
+            let seconds = by.as_secs();
+            if seconds > 0 {
+                self.console(&format!("advance {seconds}"));
+            }
+            self.clock = Clock::Real(start - by);
+            self.later(Duration::ZERO)
+        } else {
+            self.later(by)
+        };
         while self.step(until) {}
         self.reach(until);
     }
@@ -333,12 +342,13 @@ mod tests {
     }
 
     #[test]
-    fn a_real_clock_waits_in_real_time() {
+    fn a_real_clock_skips_simulated_waits_with_an_advance() {
         let start = Instant::now();
         let mut session = session(Clock::Real(start));
         session.wait(Duration::from_millis(30));
-        assert!(start.elapsed() >= Duration::from_millis(30));
-        assert!(session.harness.now >= Timestamp::from_millis(30));
+        session.wait(Duration::from_secs(900));
+        assert!(session.harness.now >= Timestamp::from_millis(900_030));
+        assert!(start.elapsed() < Duration::from_secs(60));
         assert_eq!(session.result(), Ok(()));
     }
 }

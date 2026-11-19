@@ -24,7 +24,7 @@ const HOUR: Duration = Duration::from_secs(3600);
 const QUARTER: Duration = Duration::from_secs(900);
 const RESERVOIR: &str = "reservoir 15000";
 
-pub fn all<D: Board>() -> Vec<Scenario<D>> {
+fn nominal<D: Board>() -> Vec<Scenario<D>> {
     vec![
         ("connect and status", connect_and_status),
         ("clock read", clock_read),
@@ -57,38 +57,112 @@ pub fn all<D: Board>() -> Vec<Scenario<D>> {
         ("wrong key rejected", wrong_key),
         ("unpairs", unpairs),
         ("ignores notifications", notifications),
-        ("connect survives a timeout at every step", |s| {
-            every_step(s, Fault::BleTimeout)
-        }),
-        ("connect survives a disconnect at every step", |s| {
-            every_step(s, Fault::BleDisconnected)
-        }),
-        ("connect survives a host failure at every step", |s| {
-            every_step(s, Fault::HostFails)
-        }),
-        ("connect survives a counter error at every step", |s| {
-            every_step(s, Fault::BleStatus(0x8B))
-        }),
-        ("every command survives timeouts", |s| {
-            sweep(s, Fault::BleTimeout)
-        }),
-        ("every command survives disconnects", |s| {
-            sweep(s, Fault::BleDisconnected)
-        }),
-        ("every command survives counter errors", |s| {
-            sweep(s, Fault::BleStatus(0x8B))
-        }),
-        ("every command survives refusals", |s| {
-            sweep(s, Fault::BleStatus(0x87))
-        }),
-        ("every command survives host failures", |s| {
-            sweep(s, Fault::HostFails)
-        }),
+    ]
+}
+
+pub fn all<D: Board>() -> Vec<Scenario<D>> {
+    let mut scenarios = nominal();
+    scenarios.extend([
+        (
+            "connect survives a timeout at every step",
+            every_step_timeout as fn(&mut Session<D>),
+        ),
+        (
+            "connect survives a disconnect at every step",
+            every_step_disconnect,
+        ),
+        (
+            "connect survives a host failure at every step",
+            every_step_host,
+        ),
+        (
+            "connect survives a counter error at every step",
+            every_step_counter,
+        ),
+        ("every command survives timeouts", sweep_timeout),
+        ("every command survives disconnects", sweep_disconnect),
+        ("every command survives counter errors", sweep_counter),
+        ("every command survives refusals", sweep_refusal),
+        ("every command survives host failures", sweep_host),
         (
             "every command survives timeouts on an older control service",
             older_control,
         ),
-    ]
+    ]);
+    scenarios
+}
+
+pub fn smoke<D: Board>() -> Vec<Scenario<D>> {
+    let mut scenarios = nominal();
+    scenarios.extend([
+        (
+            "one timeout recovered",
+            one_fault_timeout as fn(&mut Session<D>),
+        ),
+        ("one disconnect recovered", one_fault_disconnect),
+        ("one host failure recovered", one_fault_host),
+    ]);
+    scenarios
+}
+
+fn every_step_timeout<D: Board>(session: &mut Session<D>) {
+    every_step(session, Fault::BleTimeout);
+}
+
+fn every_step_disconnect<D: Board>(session: &mut Session<D>) {
+    every_step(session, Fault::BleDisconnected);
+}
+
+fn every_step_host<D: Board>(session: &mut Session<D>) {
+    every_step(session, Fault::HostFails);
+}
+
+fn every_step_counter<D: Board>(session: &mut Session<D>) {
+    every_step(session, Fault::BleStatus(0x8B));
+}
+
+fn sweep_timeout<D: Board>(session: &mut Session<D>) {
+    sweep(session, Fault::BleTimeout);
+}
+
+fn sweep_disconnect<D: Board>(session: &mut Session<D>) {
+    sweep(session, Fault::BleDisconnected);
+}
+
+fn sweep_counter<D: Board>(session: &mut Session<D>) {
+    sweep(session, Fault::BleStatus(0x8B));
+}
+
+fn sweep_refusal<D: Board>(session: &mut Session<D>) {
+    sweep(session, Fault::BleStatus(0x87));
+}
+
+fn sweep_host<D: Board>(session: &mut Session<D>) {
+    sweep(session, Fault::HostFails);
+}
+
+fn one_fault_timeout<D: Board>(session: &mut Session<D>) {
+    one_fault(session, Fault::BleTimeout);
+}
+
+fn one_fault_disconnect<D: Board>(session: &mut Session<D>) {
+    one_fault(session, Fault::BleDisconnected);
+}
+
+fn one_fault_host<D: Board>(session: &mut Session<D>) {
+    one_fault(session, Fault::HostFails);
+}
+
+fn one_fault<D: Board>(session: &mut Session<D>, fault: Fault) {
+    session.fresh();
+    let before = session.harness.transcript.len();
+    session.harness.faults.insert(before + 1, fault);
+    let faulted = session.command(Command::Status);
+    let recovered = session.command(Command::Status);
+    session.check(
+        matches!(recovered, Outcome::Completed(_)),
+        format!("after {faulted:?}: {recovered:?}"),
+    );
 }
 
 fn units(milli: u32) -> InsulinAmount {

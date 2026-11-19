@@ -1,3 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/harness", "crates/ble", "crates/cli"]
+
+[patch."https://github.com/u-osaid/simulator"]
+simulator-bridge = { path = "../simulator/crates/bridge" }
