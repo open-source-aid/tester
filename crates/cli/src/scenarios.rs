@@ -1,10 +1,10 @@
 use core::time::Duration;
 
 use pump_shared::{
-    Basal, BasalProfile, BasalRate, BasalSegment, Bolus, BolusKind, Command, CommandId,
-    EngineState, Event, Extended, Failure, HistoryEntry, HistoryEvent, InsulinAmount, Notification,
-    Outcome, Percent, PumpMode, PumpStatus, Refusal, Report, Sequence, Slot, TempBasalPhase,
-    TempBasalRate, UtcTime,
+    Approximation, Basal, BasalProfile, BasalRate, BasalSegment, Bolus, BolusKind, Command,
+    CommandId, EngineState, Event, Extended, Failure, HistoryEntry, HistoryEvent, InsulinAmount,
+    Notification, Outcome, Percent, PumpMode, PumpStatus, Refusal, Report, Sequence, Slot,
+    TempBasalPhase, TempBasalRate, UtcTime,
 };
 use pump_ypso::protocol::{setting, uuids, KEY_LEN};
 use tester_harness::Fault;
@@ -444,7 +444,15 @@ fn temp_basal<D: Board>(session: &mut Session<D>) {
         rate: TempBasalRate::Absolute(BasalRate::from_milliunits_per_hour(1_000)),
         duration: HALF_HOUR,
     });
-    expect(session, absolute, Outcome::Refused(Refusal::Unsupported));
+    session.check(
+        matches!(
+            absolute,
+            Outcome::Completed(_) | Outcome::Approximated(Approximation::Basal { .. })
+        ),
+        format!("absolute temp basal {absolute:?}"),
+    );
+    let cancel = session.command(Command::CancelTempBasal);
+    done(session, cancel);
 }
 
 fn temp_basal_expiry<D: Board>(session: &mut Session<D>) {
