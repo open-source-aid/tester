@@ -35,7 +35,7 @@ impl Board for YpsoSim {
     fn console(&mut self, line: &str, now: Timestamp) -> Result<(), String> {
         match line.parse().map_err(|e| format!("{e}"))? {
             Line::Knob(command) => self.apply(command, now),
-            Line::Advance(_) => {}
+            Line::Advance(_) | Line::Reset => {}
         }
         Ok(())
     }
