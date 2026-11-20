@@ -21,6 +21,7 @@ pub fn run<D: Board>(
 ) -> bool {
     let mut passed = true;
     for (name, scenario) in scenarios {
+        session.reset();
         scenario(&mut session);
         let result = session.result();
         passed &= matches!(result, Ok(()) | Err(Error::Skipped(_)));

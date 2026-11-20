@@ -1,10 +1,10 @@
 use core::time::Duration;
 
 use pump_shared::{
-    Approximation, Basal, BasalProfile, BasalRate, BasalSegment, Bolus, BolusKind, Command,
-    CommandId, EngineState, Event, Extended, Failure, HistoryEntry, HistoryEvent, InsulinAmount,
-    Notification, Outcome, Percent, PumpMode, PumpStatus, Refusal, Report, Sequence, Slot,
-    TempBasalPhase, TempBasalRate, UtcTime,
+    Basal, BasalProfile, BasalRate, BasalSegment, Bolus, BolusKind, Command, CommandId,
+    EngineState, Event, Extended, Failure, HistoryEntry, HistoryEvent, InsulinAmount, Notification,
+    Outcome, Percent, PumpMode, PumpStatus, Refusal, Report, Sequence, Slot, TempBasalPhase,
+    TempBasalRate, UtcTime,
 };
 use pump_ypso::protocol::{setting, uuids, KEY_LEN};
 use tester_harness::Fault;
@@ -19,6 +19,8 @@ const NO_COUNTERS: &str =
     "an OPN pump is driven in clear: it has no session key, counters or epoch";
 const OLDER_CONTROL: &str =
     "an OPN pump's control service is already older than 1.3: the timeout sweep covers it";
+const CODELESS: &str =
+    "the host BLE stack reports application ATT errors without their code, so the outcome is indistinguishable";
 const HALF_HOUR: Duration = Duration::from_secs(1800);
 const HOUR: Duration = Duration::from_secs(3600);
 const QUARTER: Duration = Duration::from_secs(900);
@@ -444,15 +446,25 @@ fn temp_basal<D: Board>(session: &mut Session<D>) {
         rate: TempBasalRate::Absolute(BasalRate::from_milliunits_per_hour(1_000)),
         duration: HALF_HOUR,
     });
+    if session.mode == Mode::Opn {
+        // Without the extended bolus an absolute rate cannot be held.
+        return expect(session, absolute, Outcome::Refused(Refusal::Unsupported));
+    }
+    // An absolute rate is delivered as an extended bolus of rate * window / 60.
+    done(session, absolute);
+    let extended = session.engine.therapy().extended;
     session.check(
-        matches!(
-            absolute,
-            Outcome::Completed(_) | Outcome::Approximated(Approximation::Basal { .. })
-        ),
-        format!("absolute temp basal {absolute:?}"),
+        extended
+            == Extended::Running {
+                amount: units(500),
+                duration: HALF_HOUR,
+            },
+        format!("absolute temp basal extended {extended:?}"),
     );
-    let cancel = session.command(Command::CancelTempBasal);
-    done(session, cancel);
+    for cancel in [Command::CancelExtendedBolus, Command::CancelTempBasal] {
+        let outcome = session.command(cancel);
+        done(session, outcome);
+    }
 }
 
 fn temp_basal_expiry<D: Board>(session: &mut Session<D>) {
@@ -726,6 +738,9 @@ fn other_app<D: Board>(session: &mut Session<D>) {
     if !encrypted(session) {
         return;
     }
+    if session.on_board() {
+        return session.skip(CODELESS);
+    }
     status(session);
     let other = ypso::store(session.mode, ypso::KEY, ypso::CODE);
     let (ours, store) = session.switch(ypso::engine(), other);
@@ -776,6 +791,9 @@ fn restart<D: Board>(session: &mut Session<D>) {
 }
 
 fn old_storage<D: Board>(session: &mut Session<D>) {
+    if session.mode == Mode::Encrypted && session.on_board() {
+        return session.skip(CODELESS);
+    }
     status(session);
     let old = session.harness.store.clone();
     let read = session.command(Command::ReadBasalProfile);
@@ -801,6 +819,9 @@ fn never_in_clear<D: Board>(session: &mut Session<D>) {
     if !encrypted(session) {
         return;
     }
+    if session.on_board() {
+        return session.skip(CODELESS);
+    }
     let before = session.harness.transcript.len();
     let (engine, store) = session.switch(
         ypso::engine(),
@@ -823,6 +844,9 @@ fn never_in_clear<D: Board>(session: &mut Session<D>) {
 fn wrong_key<D: Board>(session: &mut Session<D>) {
     if !encrypted(session) {
         return;
+    }
+    if session.on_board() {
+        return session.skip(CODELESS);
     }
     let (engine, store) = session.switch(
         ypso::engine(),
@@ -985,4 +1009,27 @@ fn older_control<D: Board>(session: &mut Session<D>) {
     session.tamper(&mut |pump| pump.versions.control = "1.2".into());
     sweep(session, Fault::BleTimeout);
     session.tamper(&mut |pump| pump.versions.control = "1.4".into());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::{Clock, Error};
+    use pump_ypso::sim::YpsoSim;
+    use std::time::Instant;
+
+    #[test]
+    fn the_transport_blind_scenarios_skip_on_the_board() {
+        let cases: [fn(&mut Session<YpsoSim>); 4] =
+            [other_app, old_storage, never_in_clear, wrong_key];
+        for scenario in cases {
+            let mut session = Session::new(
+                ypso::board(Mode::Encrypted),
+                Mode::Encrypted,
+                Clock::Real(Instant::now()),
+            );
+            scenario(&mut session);
+            assert_eq!(session.result(), Err(Error::Skipped(CODELESS)));
+        }
+    }
 }

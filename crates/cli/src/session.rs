@@ -81,6 +81,10 @@ impl<D: Board> Session<D> {
         self.fail(Error::Skipped(why));
     }
 
+    pub fn on_board(&self) -> bool {
+        matches!(self.clock, Clock::Real(_))
+    }
+
     pub fn tamper(&mut self, change: &mut dyn FnMut(&mut YpsoSim)) {
         if self.failure.is_some() {
             return;
@@ -116,6 +120,18 @@ impl<D: Board> Session<D> {
             store.insert(Slot::Counters, counters.clone());
         }
         self.switch(ypso::engine(), store);
+    }
+
+    pub fn reset(&mut self) {
+        if let Clock::Real(_) = self.clock {
+            self.console("reset");
+            self.counters = None;
+            self.seen = Sequence::new(0);
+            self.switch(
+                ypso::engine(),
+                ypso::store(self.mode, ypso::KEY, ypso::CODE),
+            );
+        }
     }
 
     pub fn result(&mut self) -> Result<(), Error> {
@@ -349,6 +365,19 @@ mod tests {
         session.wait(Duration::from_secs(900));
         assert!(session.harness.now >= Timestamp::from_millis(900_030));
         assert!(start.elapsed() < Duration::from_secs(60));
+        assert_eq!(session.result(), Ok(()));
+    }
+
+    #[test]
+    fn a_real_clock_resets_the_board_and_the_engine_per_scenario() {
+        let mut session = session(Clock::Real(Instant::now()));
+        session.counters = Some(vec![9; 20]);
+        session.seen = Sequence::new(42);
+        session.harness.store.insert(Slot::Counters, vec![1; 20]);
+        session.reset();
+        assert_eq!(session.counters, None);
+        assert_eq!(session.seen, Sequence::new(0));
+        assert!(!session.harness.store.contains_key(&Slot::Counters));
         assert_eq!(session.result(), Ok(()));
     }
 }
