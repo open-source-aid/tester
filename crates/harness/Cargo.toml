@@ -14,5 +14,5 @@ categories = ["development-tools::testing"]
 cgm = ["dep:cgm-shared"]
 
 [dependencies]
-cgm-shared = { git = "ssh://git@github.com/ETolboom/cgm-shared.git", branch = "main", features = ["sim"], optional = true }
+cgm-shared = { git = "ssh://git@github.com/u-osaid/cgm-shared.git", branch = "main", features = ["sim"], optional = true }
 pump-shared = { git = "https://github.com/u-osaid/pump-shared", branch = "main", features = ["sim"] }

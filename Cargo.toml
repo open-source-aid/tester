@@ -6,5 +6,5 @@ members = ["crates/harness", "crates/ble", "crates/cli"]
 simulator-bridge = { path = "../simulator/crates/bridge" }
 
 # Local development only (branch cgm-host-loop): cgm-shared is not published.
-[patch."ssh://git@github.com/ETolboom/cgm-shared.git"]
+[patch."ssh://git@github.com/u-osaid/cgm-shared.git"]
 cgm-shared = { path = "../cgm-shared" }
