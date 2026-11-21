@@ -34,8 +34,10 @@ pub fn board(mode: Mode) -> YpsoSim {
 impl Board for YpsoSim {
     fn console(&mut self, line: &str, now: Timestamp) -> Result<(), String> {
         match line.parse().map_err(|e| format!("{e}"))? {
-            Line::Knob(command) => self.apply(command, now),
-            Line::Advance(_) | Line::Reset => {}
+            // The console grammar covers both device kinds; a pump takes the
+            // pump half and says so rather than ignoring the other one.
+            Line::Knob(knob) => self.apply(knob.try_into().map_err(|e| format!("{e}"))?, now),
+            Line::Advance(_) | Line::Reset | Line::Model(_) => {}
         }
         Ok(())
     }

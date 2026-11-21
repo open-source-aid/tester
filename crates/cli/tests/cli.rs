@@ -28,6 +28,42 @@ fn refuses_a_name_that_is_not_a_simulator() {
         .starts_with("refusing `YpsoPump_10155555`"));
 }
 
+#[test]
+fn refuses_a_cgm_line_it_cannot_use_before_touching_the_radio() {
+    for (args, expected) in [
+        ("cgm", "--model is one of g6, g7, one-plus or flex"),
+        ("cgm --model g7", "--name is the name the board advertises"),
+        ("cgm --model g7 --name Dexcom12", "is a g6 name, not a g7"),
+    ] {
+        let output = tester(args);
+        assert_eq!(output.status.code(), Some(2), "{args}");
+        assert!(output.stdout.is_empty(), "{args}");
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains(expected), "{args}: {error}");
+    }
+}
+
+#[test]
+fn names_its_scenarios_when_asked_for_one_that_does_not_exist() {
+    let output = tester("cgm --model g7 --pairing-secret 1234 --scenario pairing");
+    assert_eq!(output.status.code(), Some(2));
+    let error = String::from_utf8(output.stderr).unwrap();
+    for name in ["all", "pair", "status", "full cycle", "fresh pairing"] {
+        assert!(error.contains(name), "{error}");
+    }
+}
+
+#[cfg(not(feature = "radio"))]
+#[test]
+fn needs_the_radio_feature_for_a_sensor() {
+    let output = tester("cgm --model g7 --pairing-secret 1234");
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "built without BLE: rebuild with --features radio\n"
+    );
+}
+
 #[cfg(not(feature = "radio"))]
 #[test]
 fn needs_the_radio_feature_for_ble() {

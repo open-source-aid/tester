@@ -12,10 +12,18 @@ categories = ["development-tools::testing", "command-line-utilities"]
 [features]
 radio = ["tester-ble/radio", "dep:serialport"]
 
+[dev-dependencies]
+# The simulated sensor, to drive the host loop without a radio. Behind the
+# driver's own `sim` feature, and only ever a test dependency here: the
+# in-process target is `simulator-bridge`'s business, not this crate's.
+cgm-dexcom = { git = "ssh://git@github.com/open-source-aid/cgm-dexcom.git", branch = "main", features = ["g6", "g7", "sim"] }
+
 [dependencies]
+cgm-dexcom = { git = "ssh://git@github.com/open-source-aid/cgm-dexcom.git", branch = "main", features = ["g6", "g7"] }
+cgm-shared = { git = "ssh://git@github.com/u-osaid/cgm-shared.git", branch = "main", features = ["sim"] }
 pump-shared = { git = "https://github.com/u-osaid/pump-shared", branch = "main", features = ["sim"] }
 pump-ypso = { git = "https://github.com/u-osaid/pump-yspo", branch = "main", features = ["sim", "opn", "delivery"] }
 serialport = { version = "4.10", optional = true }
 simulator-bridge = { git = "https://github.com/u-osaid/simulator", branch = "main", features = ["ypso-sim"] }
 tester-ble = { path = "../ble" }
-tester-harness = { path = "../harness" }
+tester-harness = { path = "../harness", features = ["cgm"] }

@@ -7,7 +7,7 @@ mod radio;
 mod status;
 
 pub use console::{Console, ConsoleError};
-pub use name::{NameError, SimulatorName};
+pub use name::{Advertised, NameError, SensorName, SimulatorName};
 #[cfg(feature = "radio")]
 pub use radio::{open_console, Radio};
 pub use status::status;
