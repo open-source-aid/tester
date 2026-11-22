@@ -6,7 +6,7 @@ End-to-end testing for device drivers built on `pump-shared`: insulin pumps toda
 |---|---|
 | `tester-harness` | runs a driver engine against a `SimDevice` in process: virtual time, host actions, fault injection, invariant checks |
 | `tester-ble` | real BLE central (`btleplug`, feature `radio`) as a `SimDevice`, the simulator name guard, ATT status recovery, the board serial console |
-| `tester` | the `tester` command: one list of scenarios run in process or over BLE against a hardware simulator from `u-osaid/simulator` |
+| `tester` | the `tester` command: one list of scenarios run in process or over BLE against a hardware simulator from `open-source-aid/simulator` |
 
 ```sh
 cargo run -p tester -- run --target sim

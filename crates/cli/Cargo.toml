@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.85"
 description = "Runs device scenarios in process or over BLE against a hardware simulator"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/u-osaid/tester"
+repository = "https://github.com/open-source-aid/tester"
 keywords = ["simulation", "testing", "ble", "medical-device"]
 categories = ["development-tools::testing", "command-line-utilities"]
 
@@ -20,10 +20,10 @@ cgm-dexcom = { git = "ssh://git@github.com/open-source-aid/cgm-dexcom.git", bran
 
 [dependencies]
 cgm-dexcom = { git = "ssh://git@github.com/open-source-aid/cgm-dexcom.git", branch = "main", features = ["g6", "g7"] }
-cgm-shared = { git = "ssh://git@github.com/u-osaid/cgm-shared.git", branch = "main", features = ["sim"] }
-pump-shared = { git = "https://github.com/u-osaid/pump-shared", branch = "main", features = ["sim"] }
-pump-ypso = { git = "https://github.com/u-osaid/pump-yspo", branch = "main", features = ["sim", "opn", "delivery"] }
+cgm-shared = { git = "https://github.com/open-source-aid/cgm-shared", branch = "main", features = ["sim"] }
+pump-shared = { git = "https://github.com/open-source-aid/pump-shared", branch = "main", features = ["sim"] }
+pump-ypso = { git = "https://github.com/open-source-aid/pump-ypso", branch = "main", features = ["sim", "opn", "delivery"] }
 serialport = { version = "4.10", optional = true }
-simulator-bridge = { git = "https://github.com/u-osaid/simulator", branch = "main", features = ["ypso-sim"] }
+simulator-bridge = { git = "https://github.com/open-source-aid/simulator", branch = "main", features = ["ypso-sim"] }
 tester-ble = { path = "../ble" }
 tester-harness = { path = "../harness", features = ["cgm"] }

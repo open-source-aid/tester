@@ -2,37 +2,22 @@
 resolver = "2"
 members = ["crates/harness", "crates/ble", "crates/cli"]
 
-[patch."https://github.com/u-osaid/simulator"]
+[patch."https://github.com/open-source-aid/simulator"]
 simulator-bridge = { path = "../simulator/crates/bridge" }
 
-# Local development only (branch cgm-host-loop): cgm-shared is not published.
-[patch."ssh://git@github.com/u-osaid/cgm-shared.git"]
+# Local development: every shared crate resolves to its sibling checkout, so
+# one copy of each is compiled (two copies would make `CgmEngine` two distinct
+# traits). All repositories now use the `open-source-aid` URLs; cgm-shared is
+# public and fetched over https, cgm-dexcom (private) over ssh with
+# `[net] git-fetch-with-cli = true` (see `.cargo/config.toml`).
+[patch."https://github.com/open-source-aid/cgm-shared"]
 cgm-shared = { path = "../cgm-shared" }
-
-# The CGM driver this tester drives over the radio. A private repository, so
-# `cargo` needs `[net] git-fetch-with-cli = true` (see `.cargo/config.toml`)
-# to reach it; the patch below keeps every build on the sibling checkout.
-[patch."ssh://git@github.com/open-source-aid/cgm-dexcom.git"]
-cgm-dexcom = { path = "../cgm-dexcom" }
-
-# One copy of each shared crate, or the contract types would diverge.
-#
-# The crates in this graph were written against two org URLs for the same
-# repositories: this branch and `cgm-shared` still say `u-osaid`, while
-# `cgm-dexcom`, `pump-ypso` and `simulator-bridge` already say
-# `open-source-aid`. Unpatched, cargo would compile `cgm-shared` twice and
-# `pump-shared` twice, `CgmEngine` would be two distinct traits, and
-# `CgmHost` would refuse our engine with a type error that names the same
-# crate on both sides. Every URL is therefore pinned to the one sibling
-# checkout. They collapse into a single entry once every repository agrees on
-# one org.
+# cgm-dexcom still names cgm-shared by its ssh URL.
 [patch."ssh://git@github.com/open-source-aid/cgm-shared.git"]
 cgm-shared = { path = "../cgm-shared" }
-[patch."https://github.com/u-osaid/pump-shared"]
-pump-shared = { path = "../pump-shared" }
+[patch."ssh://git@github.com/open-source-aid/cgm-dexcom.git"]
+cgm-dexcom = { path = "../cgm-dexcom" }
 [patch."https://github.com/open-source-aid/pump-shared"]
 pump-shared = { path = "../pump-shared" }
-[patch."https://github.com/u-osaid/pump-yspo"]
-pump-ypso = { path = "../pump-yspo" }
 [patch."https://github.com/open-source-aid/pump-ypso"]
 pump-ypso = { path = "../pump-yspo" }

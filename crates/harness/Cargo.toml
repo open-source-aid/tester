@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.85"
 description = "In-process harness: runs a device engine against a simulator with virtual time, faults and invariants"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/u-osaid/tester"
+repository = "https://github.com/open-source-aid/tester"
 keywords = ["simulation", "testing", "ble", "medical-device"]
 categories = ["development-tools::testing"]
 
@@ -14,5 +14,5 @@ categories = ["development-tools::testing"]
 cgm = ["dep:cgm-shared"]
 
 [dependencies]
-cgm-shared = { git = "ssh://git@github.com/u-osaid/cgm-shared.git", branch = "main", features = ["sim"], optional = true }
-pump-shared = { git = "https://github.com/u-osaid/pump-shared", branch = "main", features = ["sim"] }
+cgm-shared = { git = "https://github.com/open-source-aid/cgm-shared", branch = "main", features = ["sim"], optional = true }
+pump-shared = { git = "https://github.com/open-source-aid/pump-shared", branch = "main", features = ["sim"] }
