@@ -4,3 +4,20 @@ members = ["crates/harness", "crates/ble", "crates/cli"]
 
 [patch."https://github.com/open-source-aid/simulator"]
 simulator-bridge = { path = "../simulator/crates/bridge" }
+
+# Local development: every shared crate resolves to its sibling checkout, so
+# one copy of each is compiled (two copies would make `CgmEngine` two distinct
+# traits). All repositories now use the `open-source-aid` URLs; cgm-shared is
+# public and fetched over https, cgm-dexcom (private) over ssh with
+# `[net] git-fetch-with-cli = true` (see `.cargo/config.toml`).
+[patch."https://github.com/open-source-aid/cgm-shared"]
+cgm-shared = { path = "../cgm-shared" }
+# cgm-dexcom still names cgm-shared by its ssh URL.
+[patch."ssh://git@github.com/open-source-aid/cgm-shared.git"]
+cgm-shared = { path = "../cgm-shared" }
+[patch."ssh://git@github.com/open-source-aid/cgm-dexcom.git"]
+cgm-dexcom = { path = "../cgm-dexcom" }
+[patch."https://github.com/open-source-aid/pump-shared"]
+pump-shared = { path = "../pump-shared" }
+[patch."https://github.com/open-source-aid/pump-ypso"]
+pump-ypso = { path = "../pump-yspo" }

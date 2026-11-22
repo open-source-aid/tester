@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod args;
+mod cgm;
 #[cfg(feature = "radio")]
 mod hardware;
 mod scenarios;
@@ -10,7 +11,12 @@ mod ypso;
 use std::io::Write;
 use std::process::ExitCode;
 
-pub use args::{parse, Mode, Run, Target, UsageError};
+#[cfg(not(feature = "radio"))]
+const NO_RADIO: &str = "built without BLE: rebuild with --features radio";
+
+pub use args::{parse, CgmRun, Invocation, Mode, Run, Target, UsageError};
+pub use cgm::scenarios::{all as cgm_all, selected, CgmScenario};
+pub use cgm::session::{CgmBoard, CgmSession};
 pub use scenarios::{all, smoke, Scenario};
 pub use session::{Board, Clock, Error, Session};
 
@@ -23,15 +29,37 @@ pub fn run<D: Board>(
     for (name, scenario) in scenarios {
         session.reset();
         scenario(&mut session);
-        let result = session.result();
-        passed &= matches!(result, Ok(()) | Err(Error::Skipped(_)));
-        let _ = match result {
-            Ok(()) => writeln!(out, "pass  {name}"),
-            Err(skipped @ Error::Skipped(_)) => writeln!(out, "skip  {name}: {skipped}"),
-            Err(error) => writeln!(out, "FAIL  {name}: {error}"),
-        };
+        passed &= report(name, session.result(), &[], out);
     }
     passed
+}
+
+/// Runs the CGM scenarios, printing what each one wanted and what it saw.
+pub fn run_cgm<D: CgmBoard>(
+    mut session: CgmSession<D>,
+    scenarios: Vec<CgmScenario<D>>,
+    out: &mut dyn Write,
+) -> bool {
+    let mut passed = true;
+    for (name, scenario) in scenarios {
+        scenario(&mut session);
+        let result = session.result();
+        passed &= report(name, result, &session.take_notes(), out);
+    }
+    passed
+}
+
+/// One scenario's verdict, and whatever it found out under it.
+fn report(name: &str, result: Result<(), Error>, notes: &[String], out: &mut dyn Write) -> bool {
+    let _ = match &result {
+        Ok(()) => writeln!(out, "pass  {name}"),
+        Err(skipped @ Error::Skipped(_)) => writeln!(out, "skip  {name}: {skipped}"),
+        Err(error) => writeln!(out, "FAIL  {name}: {error}"),
+    };
+    for note in notes {
+        let _ = writeln!(out, "      {note}");
+    }
+    matches!(result, Ok(()) | Err(Error::Skipped(_)))
 }
 
 pub fn main(
@@ -40,25 +68,34 @@ pub fn main(
     err: &mut dyn Write,
 ) -> ExitCode {
     let passed = match parse(args) {
-        Ok(Run {
+        Ok(Invocation::Pump(Run {
             target: Target::Sim,
             mode,
-        }) => Ok(run(
+        })) => Ok(run(
             Session::new(ypso::board(mode), mode, Clock::Virtual),
             all(),
             out,
         )),
         #[cfg(feature = "radio")]
-        Ok(Run {
+        Ok(Invocation::Pump(Run {
             target: Target::Ble { name, console },
             mode,
-        }) => hardware::session(name, console.as_deref(), mode)
+        })) => hardware::session(name, console.as_deref(), mode)
             .map(|session| run(session, smoke(), out)),
         #[cfg(not(feature = "radio"))]
-        Ok(Run {
+        Ok(Invocation::Pump(Run {
             target: Target::Ble { .. },
             ..
-        }) => Err("built without BLE: rebuild with --features radio".into()),
+        })) => Err(NO_RADIO.into()),
+        // The sensor runs on a board and nowhere else for now: the in-process
+        // path waits on the simulator bridge growing a Dexcom device.
+        #[cfg(feature = "radio")]
+        Ok(Invocation::Cgm(run)) => {
+            let scenarios = selected(&run.scenario).unwrap_or_default();
+            hardware::cgm_session(*run).map(|session| run_cgm(session, scenarios, out))
+        }
+        #[cfg(not(feature = "radio"))]
+        Ok(Invocation::Cgm(_)) => Err(NO_RADIO.into()),
         Err(error) => Err(error.to_string()),
     };
     match passed {

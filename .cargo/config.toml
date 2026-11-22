@@ -1,0 +1,5 @@
+# The org's CGM crates are private repositories, so cargo's built-in git
+# client cannot authenticate to fetch them. Delegating to the git CLI reuses
+# whatever credentials the developer already has.
+[net]
+git-fetch-with-cli = true

@@ -14,7 +14,7 @@ use serialport::SerialPort;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
-use crate::{status, Console, SimulatorName};
+use crate::{status, Advertised, Console};
 
 const OP: Duration = Duration::from_secs(10);
 const CONNECT: Duration = Duration::from_secs(20);
@@ -35,7 +35,7 @@ pub struct Radio {
 
 struct Link {
     adapter: Adapter,
-    name: SimulatorName,
+    name: Advertised,
     peripheral: Option<Peripheral>,
     sender: mpsc::Sender<Notification>,
     forwarder: Option<JoinHandle<()>>,
@@ -43,7 +43,7 @@ struct Link {
 }
 
 impl Radio {
-    pub fn new(name: SimulatorName) -> Result<Self, Error> {
+    pub fn new(name: Advertised) -> Result<Self, Error> {
         let runtime = Runtime::new().map_err(|e| Error::RuntimeError(e.to_string()))?;
         let adapter = runtime.block_on(async {
             let adapters = Manager::new().await?.adapters().await?;
