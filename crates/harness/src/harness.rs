@@ -166,6 +166,11 @@ impl<D: SimDevice> Harness<D> {
                 Some(shared) => Completion::Secret(Secret::new(shared.to_vec())),
                 None => Completion::Failed,
             },
+            // `Action::PublicKey` asks for the public half of a key the host
+            // holds. The harness has no keystore of its own, so it reports
+            // that it could not perform it. Give it one when the first engine
+            // needs a host public key.
+            Action::PublicKey { .. } => Completion::Failed,
         })
     }
 
@@ -477,6 +482,16 @@ mod tests {
                 "subscribed to unannounced 00000000-0000-0000-0000-000000000000/02020202-0202-0202-0202-020202020202",
             ]
         );
+    }
+
+    #[test]
+    fn host_public_keys_are_not_served() {
+        let mut engine = engine(vec![Action::PublicKey {
+            id: ID,
+            key: KeyRef::new("server"),
+        }]);
+        Harness::new(Pump::default()).run(&mut engine).unwrap();
+        assert_eq!(engine.completions, ["Failed"]);
     }
 
     #[test]
