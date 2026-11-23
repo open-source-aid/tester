@@ -10,4 +10,5 @@ keywords = ["simulation", "testing", "ble", "medical-device"]
 categories = ["development-tools::testing"]
 
 [dependencies]
+curve25519-dalek = { version = "4.1", default-features = false }
 pump-shared = { git = "https://github.com/open-source-aid/pump-shared", branch = "main", features = ["sim"] }

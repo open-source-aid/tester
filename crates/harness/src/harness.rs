@@ -6,9 +6,11 @@ use std::string::String;
 use std::vec::Vec;
 
 use pump_shared::{
-    Action, BleOp, BleResult, Completion, CompletionError, DriverInfo, Engine, Event, Secret,
-    SimDevice, Slot, Timestamp, Uuid,
+    Action, BleOp, BleResult, Completion, CompletionError, DriverInfo, Engine, Event, KeyRef,
+    Secret, SimDevice, Slot, Timestamp, Uuid,
 };
+
+use crate::keys::Keystore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Fault {
@@ -53,6 +55,7 @@ pub struct Harness<D> {
     pub announced: Option<&'static DriverInfo>,
     pub resendable: BTreeSet<Uuid>,
     pub random: fn(usize) -> Vec<u8>,
+    pub keys: Keystore,
     subscribed: BTreeSet<(Uuid, Uuid)>,
     actions: usize,
     timed_out_write: Option<(Uuid, Vec<u8>)>,
@@ -77,6 +80,7 @@ impl<D: SimDevice> Harness<D> {
             announced: None,
             resendable: BTreeSet::new(),
             random: counting,
+            keys: Keystore::default(),
             subscribed: BTreeSet::new(),
             actions: 0,
             timed_out_write: None,
@@ -162,16 +166,33 @@ impl<D: SimDevice> Harness<D> {
             Action::Random { len, .. } => Completion::Secret(Secret::new((self.random)(len))),
             Action::KeyAgree {
                 key, peer_public, ..
-            } => match self.device.key_agree(&key, &peer_public) {
-                Some(shared) => Completion::Secret(Secret::new(shared.to_vec())),
+            } => self.agree(key, peer_public),
+            Action::PublicKey { key, .. } => match self.keys.public(&key) {
+                Some(public) => Completion::PublicKey(public),
                 None => Completion::Failed,
             },
-            // `Action::PublicKey` asks for the public half of a key the host
-            // holds. The harness has no keystore of its own, so it reports
-            // that it could not perform it. Give it one when the first engine
-            // needs a host public key.
-            Action::PublicKey { .. } => Completion::Failed,
         })
+    }
+
+    /// The keystore answers for every key it holds, and for any name left
+    /// over once the simulated device has declined it. A name the device does
+    /// answer for stays the device's: the keystore then serves no public half
+    /// for it, rather than one belonging to another keypair.
+    fn agree(&mut self, key: KeyRef, peer_public: [u8; 32]) -> Completion {
+        let shared = if self.keys.fails(&key) {
+            None
+        } else if self.keys.holds(&key) {
+            self.keys.agree(&key, &peer_public)
+        } else if let Some(shared) = self.device.key_agree(&key, &peer_public) {
+            self.keys.left_to_device(key);
+            Some(shared)
+        } else {
+            self.keys.agree(&key, &peer_public)
+        };
+        match shared {
+            Some(shared) => Completion::Secret(Secret::new(shared.to_vec())),
+            None => Completion::Failed,
+        }
     }
 
     fn ble(&mut self, op: BleOp, fault: Option<Fault>) -> Result<BleResult, Violation> {
@@ -239,7 +260,8 @@ impl<D: SimDevice> Harness<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pump_shared::{KeyRef, Notification};
+    use curve25519_dalek::montgomery::MontgomeryPoint;
+    use pump_shared::Notification;
     use std::collections::VecDeque;
     use std::vec;
 
@@ -448,7 +470,7 @@ mod tests {
                 "Wrapped([2])",
                 "Secret(Secret(1 bytes))",
                 "Secret(Secret(2 bytes))",
-                "Failed",
+                "Secret(Secret(32 bytes))",
             ]
         );
         assert!(harness.store.is_empty());
@@ -484,14 +506,109 @@ mod tests {
         );
     }
 
-    #[test]
-    fn host_public_keys_are_not_served() {
-        let mut engine = engine(vec![Action::PublicKey {
+    fn public_key() -> Action {
+        Action::PublicKey {
             id: ID,
             key: KeyRef::new("server"),
-        }]);
+        }
+    }
+
+    /// The public half an engine was handed, parsed back out of the transcript
+    /// the scripted engine keeps.
+    fn served_public(completion: &str) -> [u8; 32] {
+        let digits = completion
+            .trim_start_matches("PublicKey([")
+            .trim_end_matches("])");
+        let bytes: Vec<u8> = digits.split(", ").map(|b| b.parse().unwrap()).collect();
+        bytes.try_into().unwrap()
+    }
+
+    #[test]
+    fn serves_the_public_half_of_a_host_key() {
+        let mut engine = engine(vec![public_key(), public_key()]);
         Harness::new(Pump::default()).run(&mut engine).unwrap();
-        assert_eq!(engine.completions, ["Failed"]);
+        // Created on first use, then the same key for the harness's life, and
+        // the same from run to run.
+        let first = engine.completions[0].clone();
+        assert_eq!(engine.completions, [first.clone(), first.clone()]);
+        assert_eq!(
+            served_public(&first),
+            Keystore::default().public(&KeyRef::new("server")).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_seeded_keypair_is_the_one_the_engine_sees() {
+        let mut engine = engine(vec![public_key()]);
+        let mut harness = Harness::new(Pump::default());
+        harness.keys.secrets.insert(KeyRef::new("server"), [3; 32]);
+        harness.run(&mut engine).unwrap();
+        assert_eq!(
+            served_public(&engine.completions[0]),
+            MontgomeryPoint::mul_base_clamped([3; 32]).to_bytes()
+        );
+    }
+
+    /// Whichever half the engine asks for first, the two describe one keypair:
+    /// the peer's own agreement against the public half it was served matches
+    /// the shared secret the harness hands back for the same name.
+    fn one_keypair(public_first: bool) {
+        let peer_secret = [5u8; 32];
+        let peer_public = MontgomeryPoint::mul_base_clamped(peer_secret).to_bytes();
+        let agree = Action::KeyAgree {
+            id: ID,
+            key: KeyRef::new("server"),
+            peer_public,
+        };
+        let actions = if public_first {
+            vec![public_key(), agree]
+        } else {
+            vec![agree, public_key()]
+        };
+        let mut engine = engine(actions);
+        let mut harness = Harness::new(Pump::default());
+        harness.run(&mut engine).unwrap();
+        let public = engine
+            .completions
+            .iter()
+            .find(|completion| completion.starts_with("PublicKey"))
+            .map(|completion| served_public(completion))
+            .unwrap();
+        // The engine's completions redact the shared secret, so ask the
+        // harness for the same agreement again and read it out.
+        let expected = MontgomeryPoint(public).mul_clamped(peer_secret).to_bytes();
+        let agreed = harness.agree(KeyRef::new("server"), peer_public);
+        assert!(matches!(agreed, Completion::Secret(shared) if shared.expose() == expected));
+    }
+
+    #[test]
+    fn a_public_key_and_an_agreement_describe_one_keypair() {
+        one_keypair(true);
+        one_keypair(false);
+    }
+
+    #[test]
+    fn a_failing_key_is_served_neither_half() {
+        let mut engine = engine(vec![public_key(), key_agree()]);
+        let mut harness = Harness::new(Pump {
+            agrees_keys: true,
+            ..Pump::default()
+        });
+        harness.keys.failing.insert(KeyRef::new("server"));
+        harness.run(&mut engine).unwrap();
+        assert_eq!(engine.completions, ["Failed", "Failed"]);
+    }
+
+    #[test]
+    fn a_key_the_simulator_holds_has_no_host_public_half() {
+        let mut engine = engine(vec![key_agree(), public_key()]);
+        Harness::new(Pump {
+            agrees_keys: true,
+            ..Pump::default()
+        })
+        .run(&mut engine)
+        .unwrap();
+        assert_eq!(engine.completions, ["Secret(Secret(32 bytes))", "Failed"]);
     }
 
     #[test]
